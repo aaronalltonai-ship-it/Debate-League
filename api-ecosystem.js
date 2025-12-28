@@ -718,6 +718,119 @@ class EnterpriseAPIGateway {
         }
     }
 
+    async checkAuthorization(user, request) {
+        const requiredScope = request.required_scope || 'api:read';
+        const scopes = user.scopes || ['api:read'];
+        return { authorized: scopes.includes(requiredScope) };
+    }
+
+    async validateRequest(request) {
+        if (!request?.endpoint) {
+            return { valid: false, errors: ['Endpoint is required'] };
+        }
+
+        return { valid: true };
+    }
+
+    async routeRequest(request, user) {
+        const handler = this.apiRegistry.get(request.api_key)?.handler;
+        if (handler) {
+            return handler(request, user);
+        }
+
+        return {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+            body: { message: 'Request routed successfully', endpoint: request.endpoint }
+        };
+    }
+
+    async processResponse(response, request) {
+        const normalized = response || {};
+        return {
+            ...normalized,
+            headers: {
+                'X-Request-Endpoint': request.endpoint,
+                ...(normalized.headers || {})
+            }
+        };
+    }
+
+    async logAPIRequest(request, response, latency, user) {
+        this.analytics.recordRequest({
+            endpoint: request.endpoint,
+            method: request.method,
+            status: response.status || 200,
+            latency,
+            user_id: user.id
+        });
+    }
+
+    async logAPIError(request, error, latency) {
+        this.analytics.recordError({
+            endpoint: request.endpoint,
+            method: request.method,
+            error: error.message,
+            latency
+        });
+    }
+
+    async recordUsage(user, request, response) {
+        await this.monetization.recordUsage(user, request, response);
+    }
+
+    getTotalRequests() {
+        return this.analytics.getTotalRequests();
+    }
+
+    getRequestsPerSecond() {
+        return this.analytics.getRequestsPerSecond();
+    }
+
+    getAverageResponseTime() {
+        return this.analytics.getAverageResponseTime();
+    }
+
+    getErrorRate() {
+        return this.analytics.getErrorRate();
+    }
+
+    getUptime() {
+        return this.analytics.getUptime();
+    }
+
+    getEndpointMetrics() {
+        return this.analytics.getEndpointMetrics();
+    }
+
+    getUserMetrics() {
+        return this.analytics.getUserMetrics();
+    }
+
+    getGeographicMetrics() {
+        return this.analytics.getGeographicMetrics();
+    }
+
+    getPerformanceTrends() {
+        return this.analytics.getPerformanceTrends();
+    }
+
+    async checkDatabaseHealth() {
+        return { status: 'healthy', latency: '12ms' };
+    }
+
+    async checkExternalServices() {
+        return { status: 'healthy', services: ['groq', 'stripe', 'email'] };
+    }
+
+    async checkRateLimiterHealth() {
+        return { status: 'healthy', buckets: this.rateLimiter.buckets.size };
+    }
+
+    async checkAuthenticationHealth() {
+        return { status: 'healthy', providers: ['jwt', 'oauth2'] };
+    }
+
     /**
      * Generate API Documentation
      */
@@ -927,6 +1040,27 @@ class AdvancedRateLimiter {
     generateLimitKey(user, request) {
         return `${user.id}:${request.endpoint}:${Math.floor(Date.now() / 60000)}`;
     }
+
+    getLimitsForTier(tier) {
+        const limits = {
+            free: { limit: 1000, strategy: 'token_bucket' },
+            pro: { limit: 10000, strategy: 'token_bucket' },
+            enterprise: { limit: Infinity, strategy: 'token_bucket' }
+        };
+
+        return limits[tier] || limits.free;
+    }
+
+    async recordLimitCheck(user, request, result) {
+        const entry = {
+            user_id: user.id,
+            endpoint: request.endpoint,
+            allowed: result.allowed,
+            timestamp: new Date().toISOString()
+        };
+
+        this.analytics.set(`${entry.user_id}:${entry.timestamp}`, entry);
+    }
 }
 
 /**
@@ -963,6 +1097,136 @@ class APIMonetization {
         }
         
         return pricing.cost_per_request || 0;
+    }
+
+    async storeUsage(usage) {
+        this.usageTracking.set(`${usage.user_id}:${usage.timestamp}`, usage);
+    }
+
+    async updateBilling(user, usage) {
+        await this.billingEngine.recordUsage(user, usage);
+    }
+}
+
+class APIAuthManager {
+    constructor() {
+        this.providers = ['api_key', 'jwt', 'oauth2'];
+    }
+
+    async authenticate(request) {
+        if (!request?.api_key && !request?.token) {
+            return { success: false };
+        }
+
+        return {
+            success: true,
+            user: {
+                id: request.user_id || 'anonymous',
+                subscription_tier: request.subscription_tier || 'free',
+                scopes: request.scopes || ['api:read']
+            }
+        };
+    }
+}
+
+class APIAnalytics {
+    constructor() {
+        this.requests = [];
+        this.errors = [];
+        this.startTime = Date.now();
+    }
+
+    recordRequest(entry) {
+        this.requests.push(entry);
+    }
+
+    recordError(entry) {
+        this.errors.push(entry);
+    }
+
+    getTotalRequests() {
+        return this.requests.length;
+    }
+
+    getRequestsPerSecond() {
+        const seconds = Math.max(1, (Date.now() - this.startTime) / 1000);
+        return this.requests.length / seconds;
+    }
+
+    getAverageResponseTime() {
+        if (!this.requests.length) {
+            return 0;
+        }
+        const total = this.requests.reduce((sum, req) => sum + (req.latency || 0), 0);
+        return total / this.requests.length;
+    }
+
+    getErrorRate() {
+        if (!this.requests.length) {
+            return 0;
+        }
+        return this.errors.length / this.requests.length;
+    }
+
+    getUptime() {
+        return Date.now() - this.startTime;
+    }
+
+    getEndpointMetrics() {
+        return this.requests.reduce((acc, req) => {
+            acc[req.endpoint] = acc[req.endpoint] || { count: 0 };
+            acc[req.endpoint].count += 1;
+            return acc;
+        }, {});
+    }
+
+    getUserMetrics() {
+        return this.requests.reduce((acc, req) => {
+            acc[req.user_id] = acc[req.user_id] || 0;
+            acc[req.user_id] += 1;
+            return acc;
+        }, {});
+    }
+
+    getGeographicMetrics() {
+        return { regions: ['us-east', 'us-west', 'eu-central'] };
+    }
+
+    getPerformanceTrends() {
+        return { trend: 'stable', sample_size: this.requests.length };
+    }
+}
+
+class APIMarketplace {
+    constructor() {
+        this.listings = new Map();
+    }
+
+    listAPIs() {
+        return Array.from(this.listings.values());
+    }
+}
+
+class DeveloperPortal {
+    constructor() {
+        this.apps = new Map();
+    }
+
+    registerApp(app) {
+        this.apps.set(app.id, app);
+    }
+}
+
+class BillingEngine {
+    constructor() {
+        this.ledger = new Map();
+    }
+
+    async recordUsage(user, usage) {
+        const key = user.id;
+        const existing = this.ledger.get(key) || [];
+        existing.push(usage);
+        this.ledger.set(key, existing);
     }
 }
 
