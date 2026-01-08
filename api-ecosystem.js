@@ -1021,13 +1021,59 @@ class EnterpriseAPIGateway {
 class APIAuthManager {
     configure(config) {
         this.config = config;
+        this.tokens = new Map();
+        if (config?.tokens) {
+            Object.entries(config.tokens).forEach(([token, user]) => {
+                this.tokens.set(token, user);
+            });
+        }
+        if (this.tokens.size === 0) {
+            this.tokens.set('demo-token', { id: 'user_1', subscription_tier: 'pro' });
+        }
     }
 
     async authenticate(request) {
-        if (!request?.headers?.authorization) {
+        const header =
+            request?.headers?.authorization ||
+            request?.headers?.Authorization ||
+            request?.headers?.['x-api-key'] ||
+            request?.headers?.['X-API-Key'];
+        if (!header) {
             return { success: false };
         }
-        return { success: true, user: { id: 'user_1', subscription_tier: 'pro' } };
+        const token = this.extractToken(header);
+        if (!token) {
+            return { success: false };
+        }
+        const user = this.tokens.get(token);
+        if (!user) {
+            return { success: false };
+        }
+        return { success: true, user };
+    }
+
+    extractToken(header) {
+        if (typeof header !== 'string') {
+            return null;
+        }
+        const trimmed = header.trim();
+        if (!trimmed) {
+            return null;
+        }
+        const bearerPrefix = 'bearer ';
+        const apiKeyPrefix = 'apikey ';
+        const tokenPrefix = 'token ';
+        const lower = trimmed.toLowerCase();
+        if (lower.startsWith(bearerPrefix)) {
+            return trimmed.slice(bearerPrefix.length).trim();
+        }
+        if (lower.startsWith(apiKeyPrefix)) {
+            return trimmed.slice(apiKeyPrefix.length).trim();
+        }
+        if (lower.startsWith(tokenPrefix)) {
+            return trimmed.slice(tokenPrefix.length).trim();
+        }
+        return trimmed;
     }
 }
 
