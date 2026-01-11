@@ -1027,21 +1027,28 @@ class APIAuthManager {
                 this.tokens.set(token, user);
             });
         }
-        if (this.tokens.size === 0) {
+        if (
+            this.tokens.size === 0 &&
+            (config?.allowDemoToken || config?.allow_demo_token)
+        ) {
             this.tokens.set('demo-token', { id: 'user_1', subscription_tier: 'pro' });
         }
     }
 
     async authenticate(request) {
-        const header =
-            request?.headers?.authorization ||
-            request?.headers?.Authorization ||
-            request?.headers?.['x-api-key'] ||
-            request?.headers?.['X-API-Key'];
+        const headers = request?.headers ?? {};
+        const authorization = headers.authorization || headers.Authorization;
+        const apiKey = headers['x-api-key'] || headers['X-API-Key'];
+        const header = apiKey || authorization;
         if (!header) {
             return { success: false };
         }
-        const token = this.extractToken(header);
+        if (!this.tokens || this.tokens.size === 0) {
+            return { success: false };
+        }
+        const token = apiKey
+            ? this.extractToken(header, { allowUnprefixed: true })
+            : this.extractToken(header);
         if (!token) {
             return { success: false };
         }
@@ -1052,7 +1059,7 @@ class APIAuthManager {
         return { success: true, user };
     }
 
-    extractToken(header) {
+    extractToken(header, options = {}) {
         if (typeof header !== 'string') {
             return null;
         }
@@ -1073,7 +1080,10 @@ class APIAuthManager {
         if (lower.startsWith(tokenPrefix)) {
             return trimmed.slice(tokenPrefix.length).trim();
         }
-        return trimmed;
+        if (options.allowUnprefixed) {
+            return trimmed;
+        }
+        return null;
     }
 }
 
