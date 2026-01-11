@@ -1027,7 +1027,7 @@ class APIAuthManager {
                 this.tokens.set(token, user);
             });
         }
-        if (this.tokens.size === 0) {
+        if (this.tokens.size === 0 && config?.allowDemoToken) {
             this.tokens.set('demo-token', { id: 'user_1', subscription_tier: 'pro' });
         }
     }
@@ -1043,6 +1043,9 @@ class APIAuthManager {
         }
         const token = this.extractToken(header);
         if (!token) {
+            return { success: false };
+        }
+        if (this.tokens.size === 0) {
             return { success: false };
         }
         const user = this.tokens.get(token);
