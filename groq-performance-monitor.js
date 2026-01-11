@@ -7,6 +7,8 @@ class GroqPerformanceMonitor {
     constructor() {
         this.metrics = new Map();
         this.alerts = new Map();
+        this.requestHistory = new Map();
+        this.inFlightRequests = new Map();
         this.thresholds = {
             latency_warning: 100,      // ms
             latency_critical: 200,     // ms
@@ -93,21 +95,32 @@ class GroqPerformanceMonitor {
 
         // Clean old metrics (keep last hour)
         this.cleanOldMetrics(timestamp - 3600000);
+        this.cleanOldRequestHistory(timestamp - 3600000);
     }
 
     async getModelMetrics(modelName) {
-        // Simulate real metrics collection from Groq API
         const baseMetrics = this.models[modelName];
-        
+        const windowMs = 60000;
+        const recentRequests = this.getRequestHistory(modelName, windowMs);
+        const requestCount = recentRequests.length;
+        const totalTokens = recentRequests.reduce((sum, request) => sum + request.tokens, 0);
+        const totalLatency = recentRequests.reduce((sum, request) => sum + request.latency, 0);
+        const totalCost = recentRequests.reduce((sum, request) => sum + request.cost_per_request, 0);
+        const errorCount = recentRequests.filter((request) => !request.success).length;
+        const successCount = requestCount - errorCount;
+        const queueDepth = this.inFlightRequests.get(modelName) || 0;
+
         return {
-            latency: baseMetrics.expected_latency + (Math.random() * 20 - 10), // ±10ms variance
-            tokens_per_second: baseMetrics.expected_tps + (Math.random() * 200 - 100),
-            requests_per_second: Math.floor(Math.random() * 1000),
-            error_rate: Math.random() * 0.005, // 0-0.5% error rate
-            queue_depth: Math.floor(Math.random() * 50),
-            cost_per_request: baseMetrics.cost_per_token * (Math.random() * 100 + 50),
-            success_rate: 0.995 + (Math.random() * 0.005),
-            concurrent_requests: Math.floor(Math.random() * 500)
+            latency: requestCount > 0 ? totalLatency / requestCount : baseMetrics.expected_latency,
+            tokens_per_second: windowMs > 0 ? totalTokens / (windowMs / 1000) : 0,
+            requests_per_second: windowMs > 0 ? requestCount / (windowMs / 1000) : 0,
+            error_rate: requestCount > 0 ? errorCount / requestCount : 0,
+            queue_depth: queueDepth,
+            cost_per_request: requestCount > 0 ? totalCost / requestCount : 0,
+            success_rate: requestCount > 0 ? successCount / requestCount : 1,
+            concurrent_requests: queueDepth,
+            data_points: requestCount,
+            window_ms: windowMs
         };
     }
 
@@ -463,7 +476,8 @@ class GroqPerformanceMonitor {
         
         const first = metrics[0][field];
         const last = metrics[metrics.length - 1][field];
-        
+
+        if (first === 0) return 0;
         return (last - first) / first;
     }
 
@@ -587,6 +601,66 @@ class GroqPerformanceMonitor {
                 this.metrics.delete(key);
             }
         }
+    }
+
+    getRequestHistory(modelName, timeWindow) {
+        const cutoff = Date.now() - timeWindow;
+        const history = this.requestHistory.get(modelName) || [];
+        return history.filter((entry) => entry.timestamp > cutoff);
+    }
+
+    cleanOldRequestHistory(cutoffTime) {
+        for (const [modelName, history] of this.requestHistory) {
+            const filtered = history.filter((entry) => entry.timestamp >= cutoffTime);
+            if (filtered.length > 0) {
+                this.requestHistory.set(modelName, filtered);
+            } else {
+                this.requestHistory.delete(modelName);
+            }
+        }
+    }
+
+    recordRequest(modelName, { latencyMs, tokens = 0, success = true, costPerToken } = {}) {
+        const baseMetrics = this.models[modelName] || {};
+        const costPerRequest = (costPerToken ?? baseMetrics.cost_per_token ?? 0) * tokens;
+        const entry = {
+            timestamp: Date.now(),
+            latency: latencyMs ?? 0,
+            tokens,
+            success,
+            cost_per_request: costPerRequest
+        };
+
+        const history = this.requestHistory.get(modelName) || [];
+        history.push(entry);
+        this.requestHistory.set(modelName, history);
+
+        return entry;
+    }
+
+    startRequest(modelName) {
+        const current = this.inFlightRequests.get(modelName) || 0;
+        this.inFlightRequests.set(modelName, current + 1);
+        const startedAt = Date.now();
+
+        return {
+            end: ({ tokens = 0, success = true, costPerToken } = {}) => {
+                this.finishRequest(modelName, startedAt, { tokens, success, costPerToken });
+            }
+        };
+    }
+
+    finishRequest(modelName, startedAt, { tokens = 0, success = true, costPerToken } = {}) {
+        const current = this.inFlightRequests.get(modelName) || 0;
+        this.inFlightRequests.set(modelName, Math.max(0, current - 1));
+        const latencyMs = Date.now() - startedAt;
+
+        return this.recordRequest(modelName, {
+            latencyMs,
+            tokens,
+            success,
+            costPerToken
+        });
     }
 
     // Export performance data for external monitoring
