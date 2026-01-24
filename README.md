@@ -286,7 +286,7 @@ curl -H "Authorization: Bearer your_jwt_token" \
 
 ## 🚀 **Deployment Options**
 
-### **1. Vercel (Recommended)**
+### **1. Vercel (Required)**
 ```bash
 # Install Vercel CLI
 npm i -g vercel
@@ -294,6 +294,12 @@ npm i -g vercel
 # Deploy to Vercel
 vercel --prod
 ```
+
+**Serverless API Routes**
+- `/api/fact-check/verify`
+- `/api/fact-check/batch`
+- `/api/fact-check/verify-source`
+- `/api/fact-check/research`
 
 ### **2. AWS EKS**
 ```bash
