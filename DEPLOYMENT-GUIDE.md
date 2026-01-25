@@ -91,7 +91,7 @@ The platform uses these Groq models:
 
 ## 🏗️ **DEPLOYMENT OPTIONS**
 
-### **Option 1: Vercel (Recommended for Quick Start)**
+### **Option 1: Vercel (Required)**
 ```bash
 # Install Vercel CLI
 npm i -g vercel
@@ -101,6 +101,13 @@ vercel --prod
 
 # Configure environment variables in Vercel dashboard
 ```
+
+#### ✅ **Vercel Serverless Routing**
+- The GROQ fact-check API is deployed as a Vercel Serverless Function at:
+  - `https://<your-vercel-domain>/api/fact-check/verify`
+  - `https://<your-vercel-domain>/api/fact-check/batch`
+  - `https://<your-vercel-domain>/api/fact-check/verify-source`
+  - `https://<your-vercel-domain>/api/fact-check/research`
 
 ### **Option 2: AWS EKS**
 ```bash
