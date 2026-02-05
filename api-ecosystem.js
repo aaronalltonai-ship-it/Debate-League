@@ -1052,9 +1052,19 @@ class APIAuthManager {
         if (!token) {
             return { success: false };
         }
-        const user = this.tokens.get(token);
-        if (!user) {
+        const record = this.tokens.get(token);
+        if (!record) {
             return { success: false };
+        }
+        const user = record.user || record;
+        if (!user || record.disabled) {
+            return { success: false };
+        }
+        if (record.expires_at) {
+            const expiresAt = new Date(record.expires_at).getTime();
+            if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+                return { success: false };
+            }
         }
         return { success: true, user };
     }
